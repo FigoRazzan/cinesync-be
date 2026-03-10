@@ -1,0 +1,288 @@
+// ============================================================
+// Schema Prisma untuk Cine-Sync
+// Sistem Manajemen Bioskop & POS (B2B + B2C)
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// ENUM
+// ============================================================
+
+/// Peran pengguna dalam sistem
+enum Role {
+  MANAGER     // Akses penuh: kelola film, kontrak, laporan
+  CASHIER     // Hanya akses POS B2C
+  DISTRIBUTOR // Hanya akses dashboard & kontrak miliknya sendiri
+}
+
+/// Status kontrak B2B
+enum ContractStatus {
+  DRAFT     // Baru dibuat oleh Manajer, belum dikirim
+  PENDING   // Sudah dikirim, menunggu persetujuan Distributor
+  ACTIVE    // Disetujui, film sedang tayang
+  EXPIRED   // Masa tayang sudah berakhir
+  REJECTED  // Ditolak oleh Distributor
+}
+
+/// Tipe item dalam transaksi POS
+enum ItemType {
+  TICKET // Tiket bioskop
+  FNB    // Food & Beverage
+}
+
+/// Status kursi bioskop
+enum SeatStatus {
+  AVAILABLE // Kursi tersedia
+  BOOKED    // Kursi sudah dipesan
+}
+
+// ============================================================
+// MODEL USER
+// ============================================================
+
+/// Tabel pengguna sistem (Manajer, Kasir, Distributor)
+model User {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  password  String   // Disimpan dalam bentuk hash (bcrypt)
+  role      Role
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relasi: Distributor bisa memiliki banyak kontrak
+  contracts    Contract[]    @relation("DistributorContracts")
+
+  // Relasi: Kasir bisa memiliki banyak transaksi
+  transactions Transaction[] @relation("CashierTransactions")
+
+  @@map("users")
+}
+
+// ============================================================
+// MODEL MOVIE
+// ============================================================
+
+/// Tabel film - metadata diambil dari TMDB API
+model Movie {
+  id          String  @id @default(uuid())
+  tmdbId      Int     @unique // ID film dari TMDB API
+  title       String
+  overview    String? @db.Text
+  posterPath  String? // URL poster dari TMDB
+  backdropPath String?
+  releaseDate DateTime?
+  genres      String[] // Array genre film
+  runtime     Int?     // Durasi film dalam menit
+  rating      Float?   // Rating TMDB (0-10)
+
+  // Harga tiket yang ditetapkan oleh Manajer
+  ticketPrice Decimal  @db.Decimal(12, 2)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relasi: Film bisa memiliki banyak kontrak
+  contracts   Contract[]
+
+  // Relasi: Film bisa memiliki banyak kursi
+  seats       Seat[]
+
+  @@map("movies")
+}
+
+// ============================================================
+// MODEL CONTRACT (B2B)
+// ============================================================
+
+/// Tabel kontrak antara Bioskop (Manajer) dan Distributor
+model Contract {
+  id String @id @default(uuid())
+
+  // Relasi ke Film
+  movieId String
+  movie   Movie  @relation(fields: [movieId], references: [id])
+
+  // Relasi ke Distributor (User dengan role DISTRIBUTOR)
+  distributorId String
+  distributor   User   @relation("DistributorContracts", fields: [distributorId], references: [id])
+
+  // Persentase bagi hasil (0-100)
+  // Contoh: cinemaShare = 60, distributorShare = 40 (total harus 100)
+  cinemaShare      Decimal @db.Decimal(5, 2) // Persentase untuk bioskop
+  distributorShare Decimal @db.Decimal(5, 2) // Persentase untuk distributor
+
+  // Tanggal tayang
+  startDate DateTime
+  endDate   DateTime
+
+  status ContractStatus @default(DRAFT)
+
+  // Path file PDF kontrak yang di-generate oleh Puppeteer
+  pdfPath String?
+
+  // Catatan tambahan (opsional)
+  notes String? @db.Text
+
+  // Timestamp persetujuan oleh Distributor
+  approvedAt DateTime?
+  rejectedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relasi ke RevenueLedger
+  revenueEntries RevenueLedger[]
+
+  // Constraint: Jumlah cinemaShare + distributorShare harus 100
+  // (validasi dilakukan di level aplikasi/service)
+
+  @@map("contracts")
+}
+
+// ============================================================
+// MODEL SEAT (Kursi Bioskop)
+// ============================================================
+
+/// Tabel kursi bioskop per film yang sedang tayang
+model Seat {
+  id     String @id @default(uuid())
+
+  // Relasi ke Film
+  movieId String
+  movie   Movie  @relation(fields: [movieId], references: [id])
+
+  // Nomor kursi (contoh: A1, B5, C12)
+  seatNumber String
+  row        String // Baris (A, B, C, ...)
+  number     Int    // Nomor dalam baris (1, 2, 3, ...)
+
+  status SeatStatus @default(AVAILABLE)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relasi ke detail transaksi
+  transactionDetails TransactionDetail[]
+
+  // Setiap kursi unik per film
+  @@unique([movieId, seatNumber])
+  @@map("seats")
+}
+
+// ============================================================
+// MODEL TRANSACTION (POS B2C)
+// ============================================================
+
+/// Tabel transaksi penjualan tiket dan F&B oleh Kasir
+model Transaction {
+  id String @id @default(uuid())
+
+  // Relasi ke Kasir yang memproses transaksi
+  cashierId String
+  cashier   User   @relation("CashierTransactions", fields: [cashierId], references: [id])
+
+  // Total harga DIHITUNG OLEH BACKEND, bukan dari frontend
+  // Ini untuk mencegah Price Tampering
+  totalAmount Decimal @db.Decimal(12, 2)
+
+  // Nama/identitas penonton (opsional)
+  customerName String?
+
+  // Metode pembayaran
+  paymentMethod String @default("CASH")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relasi ke detail item transaksi
+  details TransactionDetail[]
+
+  // Relasi ke ledger pendapatan
+  revenueEntries RevenueLedger[]
+
+  @@map("transactions")
+}
+
+// ============================================================
+// MODEL TRANSACTION DETAIL
+// ============================================================
+
+/// Tabel detail item per transaksi (tiket atau F&B)
+model TransactionDetail {
+  id String @id @default(uuid())
+
+  // Relasi ke Transaksi induk
+  transactionId String
+  transaction   Transaction @relation(fields: [transactionId], references: [id])
+
+  // Tipe item (TICKET atau FNB)
+  itemType ItemType
+
+  // Nama item (contoh: "Tiket Avengers", "Popcorn Large")
+  itemName String
+
+  // Harga satuan diambil dari DATABASE, bukan dari frontend
+  unitPrice Decimal @db.Decimal(12, 2)
+
+  quantity Int
+
+  // Subtotal = unitPrice * quantity (dihitung oleh backend)
+  subtotal Decimal @db.Decimal(12, 2)
+
+  // Relasi ke Kursi (hanya jika itemType = TICKET)
+  seatId String?
+  seat   Seat?   @relation(fields: [seatId], references: [id])
+
+  // Relasi ke Film (untuk keperluan revenue split)
+  movieId String?
+
+  createdAt DateTime @default(now())
+
+  @@map("transaction_details")
+}
+
+// ============================================================
+// MODEL REVENUE LEDGER
+// ============================================================
+
+/// Buku besar pencatatan pembagian pendapatan per transaksi tiket
+/// Otomatis terisi saat tiket terjual berdasarkan persentase di kontrak aktif
+model RevenueLedger {
+  id String @id @default(uuid())
+
+  // Relasi ke Kontrak yang menjadi dasar perhitungan bagi hasil
+  contractId String
+  contract   Contract @relation(fields: [contractId], references: [id])
+
+  // Relasi ke Transaksi yang memicu pencatatan ini
+  transactionId String
+  transaction   Transaction @relation(fields: [transactionId], references: [id])
+
+  // Total pendapatan dari tiket pada transaksi ini
+  grossAmount Decimal @db.Decimal(12, 2)
+
+  // Bagian pendapatan untuk bioskop
+  cinemaAmount Decimal @db.Decimal(12, 2)
+
+  // Bagian pendapatan untuk distributor
+  distributorAmount Decimal @db.Decimal(12, 2)
+
+  // Persentase yang digunakan saat transaksi (snapshot dari kontrak)
+  // Disimpan sebagai snapshot agar tidak berubah jika kontrak diupdate
+  cinemaShareSnapshot      Decimal @db.Decimal(5, 2)
+  distributorShareSnapshot Decimal @db.Decimal(5, 2)
+
+  createdAt DateTime @default(now())
+
+  @@map("revenue_ledger")
+}
