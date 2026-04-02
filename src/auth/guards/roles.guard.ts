@@ -5,8 +5,7 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { Role } from '@prisma/client';
-import { ROLES_KEY } from '../decorators/roles.decorator';
+import { AppRole, ROLES_KEY } from '../decorators/roles.decorator';
 
 /**
  * RolesGuard - Guard untuk memvalidasi Role pengguna (RBAC)
@@ -36,7 +35,7 @@ export class RolesGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     // Ambil daftar role yang diizinkan dari metadata decorator @Roles()
     // Cek di level handler (method) dulu, lalu di level class (controller)
-    const requiredRoles = this.reflector.getAllAndOverride<Role[]>(ROLES_KEY, [
+    const requiredRoles = this.reflector.getAllAndOverride<AppRole[]>(ROLES_KEY, [
       context.getHandler(),
       context.getClass(),
     ]);

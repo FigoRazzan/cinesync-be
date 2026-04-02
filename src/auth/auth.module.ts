@@ -25,15 +25,9 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 
     // Konfigurasi JWT Module
     JwtModule.register({
-      // Secret key untuk signing token - WAJIB ganti di production via .env
-      secret:
-        process.env.JWT_SECRET ?? 'cine-sync-secret-key-ganti-di-production',
-
+      secret: process.env.JWT_SECRET,
       signOptions: {
-        // Token berlaku selama 7 hari (bisa disesuaikan)
-        expiresIn: (process.env.JWT_EXPIRES_IN ?? '7d') as any,
-
-        // Algoritma signing (default HS256 sudah cukup aman)
+        expiresIn: (process.env.JWT_EXPIRES_IN ?? '7d') as never,
         algorithm: 'HS256',
       },
     }),

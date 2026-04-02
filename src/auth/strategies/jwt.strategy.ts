@@ -26,6 +26,12 @@ export interface JwtPayload {
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   constructor(private readonly prisma: PrismaService) {
+    const jwtSecret = process.env.JWT_SECRET;
+
+    if (!jwtSecret) {
+      throw new Error('JWT_SECRET belum dikonfigurasi di environment');
+    }
+
     super({
       // Ambil token dari header: "Authorization: Bearer <token>"
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -34,8 +40,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       ignoreExpiration: false,
 
       // Secret key untuk verifikasi token - WAJIB ada di .env
-      secretOrKey:
-        process.env.JWT_SECRET ?? 'cine-sync-secret-key-ganti-di-production',
+      secretOrKey: jwtSecret,
     });
   }
 

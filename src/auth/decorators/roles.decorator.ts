@@ -3,7 +3,8 @@ import {
   ExecutionContext,
   SetMetadata,
 } from '@nestjs/common';
-import { Role } from '@prisma/client';
+
+export type AppRole = 'ADMIN' | 'PRODUCER' | 'USER';
 
 // ============================================================
 // KUNCI METADATA untuk Reflector
@@ -26,7 +27,7 @@ export const ROLES_KEY = 'roles';
  * @Roles(Role.MANAGER, Role.CASHIER)        // Manajer atau Kasir
  * @Roles(Role.DISTRIBUTOR)                  // Hanya Distributor
  */
-export const Roles = (...roles: Role[]) => SetMetadata(ROLES_KEY, roles);
+export const Roles = (...roles: AppRole[]) => SetMetadata(ROLES_KEY, roles);
 
 // ============================================================
 // DECORATOR @Public()

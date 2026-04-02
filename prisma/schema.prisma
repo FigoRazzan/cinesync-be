@@ -18,9 +18,9 @@ datasource db {
 
 /// Peran pengguna dalam sistem
 enum Role {
-  MANAGER     // Akses penuh: kelola film, kontrak, laporan
-  CASHIER     // Hanya akses POS B2C
-  DISTRIBUTOR // Hanya akses dashboard & kontrak miliknya sendiri
+  ADMIN    // Akses penuh: kelola platform, kontrak, langganan
+  PRODUCER // Pemilik film, membuat pengajuan kontrak tayang
+  USER     // Pelanggan platform streaming
 }
 
 /// Status kontrak B2B
@@ -30,6 +30,13 @@ enum ContractStatus {
   ACTIVE    // Disetujui, film sedang tayang
   EXPIRED   // Masa tayang sudah berakhir
   REJECTED  // Ditolak oleh Distributor
+}
+
+/// Status langganan user
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  CANCELED
 }
 
 /// Tipe item dalam transaksi POS
@@ -59,11 +66,17 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Relasi: Distributor bisa memiliki banyak kontrak
-  contracts    Contract[]    @relation("DistributorContracts")
+  // Relasi: Producer bisa memiliki banyak kontrak
+  contracts    Contract[]    @relation("ProducerContracts")
 
-  // Relasi: Kasir bisa memiliki banyak transaksi
-  transactions Transaction[] @relation("CashierTransactions")
+  // Relasi transaksi yang dilakukan user
+  transactions Transaction[] @relation("UserTransactions")
+
+  // Relasi langganan user
+  subscriptions Subscription[]
+
+  // Relasi film yang diunggah producer
+  producedMovies Movie[] @relation("MovieProducer")
 
   @@map("users")
 }
@@ -75,7 +88,7 @@ model User {
 /// Tabel film - metadata diambil dari TMDB API
 model Movie {
   id          String  @id @default(uuid())
-  tmdbId      Int     @unique // ID film dari TMDB API
+  tmdbId      Int?    @unique // Opsional: ID film dari TMDB API
   title       String
   overview    String? @db.Text
   posterPath  String? // URL poster dari TMDB
@@ -85,8 +98,14 @@ model Movie {
   runtime     Int?     // Durasi film dalam menit
   rating      Float?   // Rating TMDB (0-10)
 
-  // Harga tiket yang ditetapkan oleh Manajer
-  ticketPrice Decimal  @db.Decimal(12, 2)
+  // Harga lisensi konten (opsional untuk skenario streaming)
+  licensePrice Decimal? @db.Decimal(12, 2)
+
+  // Film milik producer tertentu
+  ownerProducerId String?
+  ownerProducer   User?   @relation("MovieProducer", fields: [ownerProducerId], references: [id])
+
+  isPublished Boolean @default(false)
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -112,14 +131,14 @@ model Contract {
   movieId String
   movie   Movie  @relation(fields: [movieId], references: [id])
 
-  // Relasi ke Distributor (User dengan role DISTRIBUTOR)
-  distributorId String
-  distributor   User   @relation("DistributorContracts", fields: [distributorId], references: [id])
+  // Relasi ke Producer (User dengan role PRODUCER)
+  producerId String
+  producer   User   @relation("ProducerContracts", fields: [producerId], references: [id])
 
   // Persentase bagi hasil (0-100)
   // Contoh: cinemaShare = 60, distributorShare = 40 (total harus 100)
-  cinemaShare      Decimal @db.Decimal(5, 2) // Persentase untuk bioskop
-  distributorShare Decimal @db.Decimal(5, 2) // Persentase untuk distributor
+  platformShare Decimal @db.Decimal(5, 2) // Persentase untuk platform
+  producerShare Decimal @db.Decimal(5, 2) // Persentase untuk producer
 
   // Tanggal tayang
   startDate DateTime
@@ -187,9 +206,9 @@ model Seat {
 model Transaction {
   id String @id @default(uuid())
 
-  // Relasi ke Kasir yang memproses transaksi
-  cashierId String
-  cashier   User   @relation("CashierTransactions", fields: [cashierId], references: [id])
+  // Relasi ke user yang memproses transaksi
+  userId String
+  user   User   @relation("UserTransactions", fields: [userId], references: [id])
 
   // Total harga DIHITUNG OLEH BACKEND, bukan dari frontend
   // Ini untuk mencegah Price Tampering
@@ -271,18 +290,57 @@ model RevenueLedger {
   // Total pendapatan dari tiket pada transaksi ini
   grossAmount Decimal @db.Decimal(12, 2)
 
-  // Bagian pendapatan untuk bioskop
-  cinemaAmount Decimal @db.Decimal(12, 2)
+  // Bagian pendapatan untuk platform
+  platformAmount Decimal @db.Decimal(12, 2)
 
-  // Bagian pendapatan untuk distributor
-  distributorAmount Decimal @db.Decimal(12, 2)
+  // Bagian pendapatan untuk producer
+  producerAmount Decimal @db.Decimal(12, 2)
 
   // Persentase yang digunakan saat transaksi (snapshot dari kontrak)
   // Disimpan sebagai snapshot agar tidak berubah jika kontrak diupdate
-  cinemaShareSnapshot      Decimal @db.Decimal(5, 2)
-  distributorShareSnapshot Decimal @db.Decimal(5, 2)
+  platformShareSnapshot Decimal @db.Decimal(5, 2)
+  producerShareSnapshot Decimal @db.Decimal(5, 2)
 
   createdAt DateTime @default(now())
 
   @@map("revenue_ledger")
+}
+
+// ============================================================
+// MODEL PLAN & SUBSCRIPTION (B2C Streaming)
+// ============================================================
+
+model Plan {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  description String?
+  price       Decimal  @db.Decimal(12, 2)
+  durationDays Int
+  isActive    Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  subscriptions Subscription[]
+
+  @@map("plans")
+}
+
+model Subscription {
+  id        String   @id @default(uuid())
+  userId    String
+  planId    String
+  status    SubscriptionStatus @default(ACTIVE)
+  startDate DateTime @default(now())
+  endDate   DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+  plan Plan @relation(fields: [planId], references: [id])
+
+  @@index([userId, status])
+  @@map("subscriptions")
 }

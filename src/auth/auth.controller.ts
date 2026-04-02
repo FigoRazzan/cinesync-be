@@ -7,9 +7,8 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
-import { Role } from '@prisma/client';
 import { AuthService } from './auth.service';
-import { LoginDto, RegisterDto } from './dto/auth.dto';
+import { AdminRegisterDto, LoginDto, RegisterDto } from './dto/auth.dto';
 import { CurrentUser, Public, Roles } from './decorators/roles.decorator';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
@@ -21,9 +20,10 @@ import { RolesGuard } from './guards/roles.guard';
  *
  * Endpoint:
  * - POST /api/auth/login          -> Login (publik)
- * - POST /api/auth/register       -> Registrasi user baru (hanya MANAGER)
+ * - POST /api/auth/register       -> Registrasi user baru (publik)
+ * - POST /api/auth/admin/register -> Buat akun oleh ADMIN
  * - GET  /api/auth/profile        -> Ambil profil user yang sedang login
- * - POST /api/auth/seed-manager   -> Buat akun manager pertama (publik, satu kali pakai)
+ * - POST /api/auth/seed-admin     -> Buat akun admin pertama (publik, satu kali pakai)
  */
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('auth')
@@ -58,22 +58,27 @@ export class AuthController {
   /**
    * Endpoint Registrasi User Baru
    *
-   * Diproteksi - hanya bisa diakses oleh MANAGER.
-   * MANAGER bisa membuat akun CASHIER dan DISTRIBUTOR baru.
-   * MANAGER tidak bisa membuat akun MANAGER lain (dicegah di service).
+  * Publik - user dapat memilih role USER atau PRODUCER.
    *
    * @param dto     - RegisterDto { name, email, password, role }
    * @param creator - Data user MANAGER yang sedang login (dari JWT)
    * @returns { message: string, user: { id, name, email, role } }
    */
-  @Roles(Role.MANAGER)
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
-  async register(
-    @Body() dto: RegisterDto,
-    @CurrentUser('role') creatorRole: Role,
+  @Public()
+  async register(@Body() dto: RegisterDto) {
+    return this.authService.register(dto);
+  }
+
+  @Roles('ADMIN')
+  @Post('admin/register')
+  @HttpCode(HttpStatus.CREATED)
+  async registerByAdmin(
+    @Body() dto: AdminRegisterDto,
+    @CurrentUser('role') adminRole: 'ADMIN' | 'PRODUCER' | 'USER',
   ) {
-    return this.authService.register(dto, creatorRole);
+    return this.authService.createUserByAdmin(dto, adminRole);
   }
 
   // ============================================================
@@ -96,7 +101,7 @@ export class AuthController {
   }
 
   // ============================================================
-  // POST /api/auth/seed-manager
+  // POST /api/auth/seed-admin
   // ============================================================
 
   /**
@@ -113,9 +118,9 @@ export class AuthController {
    * @returns Informasi akun manager yang dibuat (termasuk default password)
    */
   @Public()
-  @Post('seed-manager')
+  @Post('seed-admin')
   @HttpCode(HttpStatus.OK)
-  async seedManager() {
-    return this.authService.seedManager();
+  async seedAdmin() {
+    return this.authService.seedAdmin();
   }
 }

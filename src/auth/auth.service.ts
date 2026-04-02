@@ -7,8 +7,13 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
-import { LoginDto, RegisterDto } from './dto/auth.dto';
-import { Role } from '@prisma/client';
+import {
+  AdminRegisterDto,
+  AppRole,
+  LoginDto,
+  RegisterDto,
+  RegisterableRole,
+} from './dto/auth.dto';
 import * as bcrypt from 'bcrypt';
 
 /**
@@ -19,7 +24,7 @@ export interface AuthenticatedUser {
   id: string;
   name: string;
   email: string;
-  role: Role;
+  role: AppRole;
 }
 
 /**
@@ -37,6 +42,7 @@ export class AuthService {
 
   // Jumlah salt rounds untuk bcrypt (semakin tinggi = semakin aman tapi lebih lambat)
   private readonly BCRYPT_SALT_ROUNDS = 12;
+  private readonly DEFAULT_REGISTER_ROLE: RegisterableRole = 'USER';
 
   constructor(
     private readonly prisma: PrismaService,
@@ -117,16 +123,9 @@ export class AuthService {
    * @throws ConflictException jika email sudah terdaftar
    * @throws ForbiddenException jika mencoba membuat akun MANAGER baru
    */
-  async register(dto: RegisterDto, creatorRole: Role) {
-    const { name, email, password, role } = dto;
-
-    // Keamanan: MANAGER tidak boleh membuat akun MANAGER lain
-    // Mencegah eskalasi privilege
-    if (role === Role.MANAGER) {
-      throw new ForbiddenException(
-        'Tidak diizinkan membuat akun dengan role MANAGER',
-      );
-    }
+  async register(dto: RegisterDto) {
+    const { name, email, password } = dto;
+    const role = dto.role ?? this.DEFAULT_REGISTER_ROLE;
 
     // Cek apakah email sudah terdaftar
     const existingUser = await this.prisma.user.findUnique({
@@ -146,7 +145,7 @@ export class AuthService {
         name,
         email,
         password: hashedPassword,
-        role,
+        role: role as never,
       },
       select: {
         id: true,
@@ -159,11 +158,50 @@ export class AuthService {
     });
 
     this.logger.log(
-      `✅ User baru berhasil dibuat: ${newUser.email} (${newUser.role}) oleh ${creatorRole}`,
+      `✅ User baru berhasil dibuat: ${newUser.email} (${newUser.role})`,
     );
 
     return {
-      message: 'Akun berhasil dibuat',
+      message: 'Akun berhasil dibuat. Silakan login.',
+      user: newUser,
+    };
+  }
+
+  async createUserByAdmin(dto: AdminRegisterDto, adminRole: AppRole) {
+    if (adminRole !== 'ADMIN') {
+      throw new ForbiddenException('Hanya ADMIN yang dapat membuat akun baru');
+    }
+
+    const { name, email, password, role } = dto;
+
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (existingUser) {
+      throw new ConflictException(`Email '${email}' sudah terdaftar di sistem`);
+    }
+
+    const hashedPassword = await bcrypt.hash(password, this.BCRYPT_SALT_ROUNDS);
+
+    const newUser = await this.prisma.user.create({
+      data: {
+        name,
+        email,
+        password: hashedPassword,
+        role: role as never,
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        createdAt: true,
+      },
+    });
+
+    return {
+      message: 'Akun baru berhasil dibuat oleh ADMIN',
       user: newUser,
     };
   }
@@ -238,33 +276,31 @@ export class AuthService {
    *
    * @returns Data manager yang baru dibuat atau pesan bahwa sudah ada
    */
-  async seedManager() {
-    // Cek apakah sudah ada MANAGER di database
+  async seedAdmin() {
+    const seedName = process.env.ADMIN_SEED_NAME ?? 'Platform Admin';
+    const seedEmail = process.env.ADMIN_SEED_EMAIL ?? 'admin@cinesync.com';
+    const seedPassword = process.env.ADMIN_SEED_PASSWORD ?? 'Admin@12345';
+
+    // Cek apakah sudah ada ADMIN di database
     const existingManager = await this.prisma.user.findFirst({
-      where: { role: Role.MANAGER },
+      where: { role: 'ADMIN' as never },
     });
 
     if (existingManager) {
       return {
-        message: 'Akun Manager sudah ada di sistem',
+        message: 'Akun Admin sudah ada di sistem',
         email: existingManager.email,
       };
     }
 
-    // Buat akun manager default
-    // GANTI PASSWORD INI SEGERA SETELAH LOGIN PERTAMA!
-    const defaultPassword = 'Manager@123';
-    const hashedPassword = await bcrypt.hash(
-      defaultPassword,
-      this.BCRYPT_SALT_ROUNDS,
-    );
+    const hashedPassword = await bcrypt.hash(seedPassword, this.BCRYPT_SALT_ROUNDS);
 
     const manager = await this.prisma.user.create({
       data: {
-        name: 'Admin Manager',
-        email: 'manager@cinesync.com',
+        name: seedName,
+        email: seedEmail,
         password: hashedPassword,
-        role: Role.MANAGER,
+        role: 'ADMIN' as never,
       },
       select: {
         id: true,
@@ -275,14 +311,14 @@ export class AuthService {
     });
 
     this.logger.warn(
-      `⚠️  Akun Manager default dibuat! Email: ${manager.email} | Password: ${defaultPassword}`,
+      `⚠️  Akun Admin default dibuat! Email: ${manager.email} | Password: ${seedPassword}`,
     );
     this.logger.warn('⚠️  SEGERA GANTI PASSWORD SETELAH LOGIN PERTAMA!');
 
     return {
-      message: 'Akun Manager default berhasil dibuat. SEGERA GANTI PASSWORD!',
+      message: 'Akun Admin default berhasil dibuat. SEGERA GANTI PASSWORD!',
       user: manager,
-      defaultPassword,
+      defaultPassword: seedPassword,
     };
   }
 }

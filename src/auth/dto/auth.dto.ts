@@ -1,13 +1,18 @@
 import {
   IsEmail,
-  IsEnum,
+  IsIn,
   IsNotEmpty,
   IsString,
   MinLength,
   MaxLength,
   IsOptional,
 } from 'class-validator';
-import { Role } from '@prisma/client';
+
+export const REGISTERABLE_ROLES = ['USER', 'PRODUCER'] as const;
+export type RegisterableRole = (typeof REGISTERABLE_ROLES)[number];
+
+export const APP_ROLES = ['ADMIN', 'PRODUCER', 'USER'] as const;
+export type AppRole = (typeof APP_ROLES)[number];
 
 /**
  * DTO untuk proses Login
@@ -44,11 +49,34 @@ export class RegisterDto {
   @MaxLength(50, { message: 'Password maksimal 50 karakter' })
   password: string;
 
-  @IsEnum(Role, {
-    message: `Role harus salah satu dari: ${Object.values(Role).join(', ')}`,
+  @IsIn(REGISTERABLE_ROLES, {
+    message: `Role harus salah satu dari: ${REGISTERABLE_ROLES.join(', ')}`,
+  })
+  @IsOptional()
+  role?: RegisterableRole;
+}
+
+export class AdminRegisterDto {
+  @IsString({ message: 'Nama harus berupa string' })
+  @IsNotEmpty({ message: 'Nama tidak boleh kosong' })
+  @MaxLength(100, { message: 'Nama maksimal 100 karakter' })
+  name: string;
+
+  @IsEmail({}, { message: 'Format email tidak valid' })
+  @IsNotEmpty({ message: 'Email tidak boleh kosong' })
+  email: string;
+
+  @IsString({ message: 'Password harus berupa string' })
+  @IsNotEmpty({ message: 'Password tidak boleh kosong' })
+  @MinLength(8, { message: 'Password minimal 8 karakter' })
+  @MaxLength(50, { message: 'Password maksimal 50 karakter' })
+  password: string;
+
+  @IsIn(APP_ROLES, {
+    message: `Role harus salah satu dari: ${APP_ROLES.join(', ')}`,
   })
   @IsNotEmpty({ message: 'Role tidak boleh kosong' })
-  role: Role;
+  role: AppRole;
 }
 
 /**
@@ -63,7 +91,7 @@ export class AuthResponseDto {
     id: string;
     name: string;
     email: string;
-    role: Role;
+    role: AppRole;
   };
 }
 
